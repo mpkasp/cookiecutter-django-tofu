@@ -1,0 +1,71 @@
+{% if cookiecutter.cloud_provider == "aws" or cookiecutter.cloud_provider == "both" -%}
+name: Infrastructure (AWS)
+
+on:
+  push:
+    branches: [ master, prod ]
+    paths: [ infra/** ]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment'
+        required: true
+        type: choice
+        options: [ dev, prod ]
+      action:
+        description: 'Action'
+        required: true
+        default: plan
+        type: choice
+        options: [ plan, apply ]
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  tofu:
+    runs-on: ubuntu-latest
+    environment: {% raw %}${{ github.event.inputs.environment || (github.ref == 'refs/heads/prod' && 'prod') || 'dev' }}{% endraw %}
+    defaults:
+      run:
+        working-directory: infra
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: {% raw %}${{ secrets.AWS_ROLE_TO_ASSUME }}{% endraw %}
+          aws-region: {% raw %}${{ vars.AWS_REGION }}{% endraw %}
+
+      - name: Set up OpenTofu
+        uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_version: "~1.9"
+
+      - name: Set environment name
+        id: env
+        run: |
+          echo "name={% raw %}${{ github.event.inputs.environment || (github.ref == 'refs/heads/prod' && 'prod') || 'dev' }}{% endraw %}" >> $GITHUB_OUTPUT
+
+      - name: tofu init
+        run: tofu init -input=false -backend-config=backend-{% raw %}${{ steps.env.outputs.name }}{% endraw %}.hcl
+
+      - name: tofu plan
+        run: |
+          tofu plan -input=false \
+            -var-file={% raw %}${{ steps.env.outputs.name }}{% endraw %}.tfvars \
+            -var="database_password={% raw %}${{ secrets.DB_PASSWORD }}{% endraw %}" \
+            -var="django_secret_key={% raw %}${{ secrets.DJANGO_SECRET_KEY }}{% endraw %}"
+
+      - name: tofu apply
+        if: {% raw %}${{ github.event.inputs.action == 'apply' }}{% endraw %}
+        run: |
+          tofu apply -auto-approve -input=false \
+            -var-file={% raw %}${{ steps.env.outputs.name }}{% endraw %}.tfvars \
+            -var="database_password={% raw %}${{ secrets.DB_PASSWORD }}{% endraw %}" \
+            -var="django_secret_key={% raw %}${{ secrets.DJANGO_SECRET_KEY }}{% endraw %}"
+
+{% endif -%}

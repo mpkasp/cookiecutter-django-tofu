@@ -1,0 +1,199 @@
+{% if cookiecutter.cloud_provider == "gcp" or cookiecutter.cloud_provider == "both" -%}
+name: Deploy to GCP
+
+on:
+  push:
+    branches: [ master, prod ]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - prod
+  workflow_call:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: false
+        default: 'dev'
+        type: string
+
+concurrency:
+  group: {% raw %}deploy-${{ github.ref }}{% endraw %}
+  cancel-in-progress: false
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  build:
+    name: Build & Push Image
+    needs: ci
+    runs-on: ubuntu-latest
+    environment: {% raw %}${{ inputs.environment || (github.ref == 'refs/heads/prod' && 'prod') || 'dev' }}{% endraw %}
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      PROJECT_ID: {% raw %}${{ vars.GCP_PROJECT_ID }}{% endraw %}
+      REGION: {% raw %}${{ vars.GCP_REGION }}{% endraw %}
+      SERVICE_NAME: {% raw %}${{ vars.GCP_SERVICE_NAME }}{% endraw %}
+      REGISTRY: {% raw %}${{ vars.GCP_REGION }}{% endraw %}-docker.pkg.dev
+      ARTIFACT_REPO: {% raw %}${{ vars.GCP_ARTIFACT_REPO }}{% endraw %}
+      IMAGE_URI: {% raw %}${{ vars.GCP_REGION }}{% endraw %}-docker.pkg.dev/{% raw %}${{ vars.GCP_PROJECT_ID }}{% endraw %}/{% raw %}${{ vars.GCP_ARTIFACT_REPO }}{% endraw %}/{% raw %}${{ vars.GCP_SERVICE_NAME }}{% endraw %}:{% raw %}${{ github.sha }}{% endraw %}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: {% raw %}${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}{% endraw %}
+          service_account: {% raw %}${{ secrets.GCP_SERVICE_ACCOUNT }}{% endraw %}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker {% raw %}${{ env.REGISTRY }}{% endraw %}
+
+      - name: Read Python version
+        id: python_version
+        run: echo "version=$(cat .python-version)" >> $GITHUB_OUTPUT
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            {% raw %}${{ env.IMAGE_URI }}{% endraw %}
+            {% raw %}${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.ARTIFACT_REPO }}/${{ env.SERVICE_NAME }}{% endraw %}:latest
+          build-args: |
+            PYTHON_VERSION={% raw %}${{ steps.python_version.outputs.version }}{% endraw %}
+            SETTINGS_NAME={% raw %}${{ secrets.GCP_SECRET_SETTINGS_NAME }}{% endraw %}
+          cache-from: type=registry,ref={% raw %}${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.ARTIFACT_REPO }}/${{ env.SERVICE_NAME }}{% endraw %}:latest
+          cache-to: type=inline
+
+  collectstatic:
+    name: Collect Static Files
+    needs: build
+    runs-on: ubuntu-latest
+    environment: {% raw %}${{ inputs.environment || (github.ref == 'refs/heads/prod' && 'prod') || 'dev' }}{% endraw %}
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      REGION: {% raw %}${{ vars.GCP_REGION }}{% endraw %}
+      SERVICE_NAME: {% raw %}${{ vars.GCP_SERVICE_NAME }}{% endraw %}
+      IMAGE_URI: {% raw %}${{ vars.GCP_REGION }}{% endraw %}-docker.pkg.dev/{% raw %}${{ vars.GCP_PROJECT_ID }}{% endraw %}/{% raw %}${{ vars.GCP_ARTIFACT_REPO }}{% endraw %}/{% raw %}${{ vars.GCP_SERVICE_NAME }}{% endraw %}:{% raw %}${{ github.sha }}{% endraw %}
+      CLOUDSQL_CONN: {% raw %}${{ vars.GCP_PROJECT_ID }}{% endraw %}:{% raw %}${{ vars.GCP_REGION }}{% endraw %}:{% raw %}${{ vars.GCP_CLOUDSQL_INSTANCE_NAME }}{% endraw %}
+    steps:
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: {% raw %}${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}{% endraw %}
+          service_account: {% raw %}${{ secrets.GCP_SERVICE_ACCOUNT }}{% endraw %}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Run collectstatic
+        run: |
+          gcloud run jobs deploy {% raw %}${{ env.SERVICE_NAME }}{% endraw %}-collectstatic \
+            --image {% raw %}${{ env.IMAGE_URI }}{% endraw %} \
+            --region {% raw %}${{ env.REGION }}{% endraw %} \
+            --set-cloudsql-instances {% raw %}${{ env.CLOUDSQL_CONN }}{% endraw %} \
+            --set-env-vars DJANGO_SETTINGS_MODULE={{ cookiecutter.project_slug }}.settings.gcp,SETTINGS_NAME={% raw %}${{ secrets.GCP_SECRET_SETTINGS_NAME }}{% endraw %} \
+            --command python \
+            --args manage.py,collectstatic,--verbosity,2,--no-input \
+            --execute-now \
+            --wait
+
+  migrate:
+    name: Migrate Database
+    needs: build
+    runs-on: ubuntu-latest
+    environment: {% raw %}${{ inputs.environment || (github.ref == 'refs/heads/prod' && 'prod') || 'dev' }}{% endraw %}
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      REGION: {% raw %}${{ vars.GCP_REGION }}{% endraw %}
+      SERVICE_NAME: {% raw %}${{ vars.GCP_SERVICE_NAME }}{% endraw %}
+      IMAGE_URI: {% raw %}${{ vars.GCP_REGION }}{% endraw %}-docker.pkg.dev/{% raw %}${{ vars.GCP_PROJECT_ID }}{% endraw %}/{% raw %}${{ vars.GCP_ARTIFACT_REPO }}{% endraw %}/{% raw %}${{ vars.GCP_SERVICE_NAME }}{% endraw %}:{% raw %}${{ github.sha }}{% endraw %}
+      CLOUDSQL_CONN: {% raw %}${{ vars.GCP_PROJECT_ID }}{% endraw %}:{% raw %}${{ vars.GCP_REGION }}{% endraw %}:{% raw %}${{ vars.GCP_CLOUDSQL_INSTANCE_NAME }}{% endraw %}
+    steps:
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: {% raw %}${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}{% endraw %}
+          service_account: {% raw %}${{ secrets.GCP_SERVICE_ACCOUNT }}{% endraw %}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Run database migrations
+        run: |
+          gcloud run jobs deploy {% raw %}${{ env.SERVICE_NAME }}{% endraw %}-migrate \
+            --image {% raw %}${{ env.IMAGE_URI }}{% endraw %} \
+            --region {% raw %}${{ env.REGION }}{% endraw %} \
+            --set-cloudsql-instances {% raw %}${{ env.CLOUDSQL_CONN }}{% endraw %} \
+            --set-env-vars DJANGO_SETTINGS_MODULE={{ cookiecutter.project_slug }}.settings.gcp,SETTINGS_NAME={% raw %}${{ secrets.GCP_SECRET_SETTINGS_NAME }}{% endraw %},DB_HOST=/cloudsql/{% raw %}${{ env.CLOUDSQL_CONN }}{% endraw %} \
+            --command python \
+            --args manage.py,migrate,--noinput \
+            --execute-now \
+            --wait
+
+  deploy:
+    name: Deploy to Cloud Run
+    needs: [collectstatic, migrate]
+    runs-on: ubuntu-latest
+    environment: {% raw %}${{ inputs.environment || (github.ref == 'refs/heads/prod' && 'prod') || 'dev' }}{% endraw %}
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      REGION: {% raw %}${{ vars.GCP_REGION }}{% endraw %}
+      SERVICE_NAME: {% raw %}${{ vars.GCP_SERVICE_NAME }}{% endraw %}
+      IMAGE_URI: {% raw %}${{ vars.GCP_REGION }}{% endraw %}-docker.pkg.dev/{% raw %}${{ vars.GCP_PROJECT_ID }}{% endraw %}/{% raw %}${{ vars.GCP_ARTIFACT_REPO }}{% endraw %}/{% raw %}${{ vars.GCP_SERVICE_NAME }}{% endraw %}:{% raw %}${{ github.sha }}{% endraw %}
+      CLOUDSQL_CONN: {% raw %}${{ vars.GCP_PROJECT_ID }}{% endraw %}:{% raw %}${{ vars.GCP_REGION }}{% endraw %}:{% raw %}${{ vars.GCP_CLOUDSQL_INSTANCE_NAME }}{% endraw %}
+    steps:
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: {% raw %}${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}{% endraw %}
+          service_account: {% raw %}${{ secrets.GCP_SERVICE_ACCOUNT }}{% endraw %}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Create cache table
+        run: |
+          gcloud run jobs deploy {% raw %}${{ env.SERVICE_NAME }}{% endraw %}-cachetable \
+            --image {% raw %}${{ env.IMAGE_URI }}{% endraw %} \
+            --region {% raw %}${{ env.REGION }}{% endraw %} \
+            --set-cloudsql-instances {% raw %}${{ env.CLOUDSQL_CONN }}{% endraw %} \
+            --set-env-vars DJANGO_SETTINGS_MODULE={{ cookiecutter.project_slug }}.settings.gcp,SETTINGS_NAME={% raw %}${{ secrets.GCP_SECRET_SETTINGS_NAME }}{% endraw %},DB_HOST=/cloudsql/{% raw %}${{ env.CLOUDSQL_CONN }}{% endraw %} \
+            --command python \
+            --args manage.py,createcachetable,{{ cookiecutter.project_slug }}_cache \
+            --execute-now \
+            --wait || true
+
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy {% raw %}${{ env.SERVICE_NAME }}{% endraw %} \
+            --image {% raw %}${{ env.IMAGE_URI }}{% endraw %} \
+            --region {% raw %}${{ env.REGION }}{% endraw %} \
+            --platform managed \
+            --allow-unauthenticated \
+            --set-cloudsql-instances {% raw %}${{ env.CLOUDSQL_CONN }}{% endraw %} \
+            --update-env-vars DJANGO_SETTINGS_MODULE={{ cookiecutter.project_slug }}.settings.gcp
+
+{% endif -%}

@@ -1,0 +1,75 @@
+[project]
+name = "{{ cookiecutter.project_slug }}"
+version = "0.1.0"
+description = "{{ cookiecutter.description }}"
+authors = [
+    {name = "{{ cookiecutter.author_name }}", email = "{{ cookiecutter.author_email }}"}
+]
+requires-python = ">={{ cookiecutter.python_version }}"
+dependencies = [
+    "django>=6.0,<6.1",
+    "psycopg[binary]>=3.2",
+    "gunicorn>=23.0",
+    "whitenoise>=6.8",
+    "django-environ>=0.11",
+    "social-auth-app-django>=5.4",
+    "django-recaptcha>=4.0",
+    {% if cookiecutter.css_framework == "bootstrap5" -%}
+    "django-crispy-forms>=2.3",
+    "crispy-bootstrap5>=2.0",
+    {% endif -%}
+    {% if cookiecutter.use_sentry == "yes" -%}
+    "sentry-sdk[django]>=2.19",
+    {% endif -%}
+    {% if cookiecutter.email_backend == "mailgun" or cookiecutter.email_backend == "ses" -%}
+    "django-anymail[{{ cookiecutter.email_backend }}]>=12.0",
+    {% endif -%}
+    {% if cookiecutter.cloud_provider == "gcp" or cookiecutter.cloud_provider == "both" -%}
+    "django-storages[google]>=1.14",
+    "google-cloud-secret-manager>=2.21",
+    {% endif -%}
+    {% if cookiecutter.cloud_provider == "aws" or cookiecutter.cloud_provider == "both" -%}
+    "django-storages[boto3]>=1.14",
+    {% endif -%}
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-django>=4.9",
+    "pytest-cov>=6.0",
+    "ruff>=0.8",
+    "django-debug-toolbar>=4.4",
+    "django-extensions>=3.2",
+    "ipython>=8.30",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.ruff]
+line-length = 100
+target-version = "py{{ cookiecutter.python_version.split(".")[0] }}{{ cookiecutter.python_version.split(".")[1] }}"
+
+[tool.ruff.lint]
+select = [
+    "E",  # pycodestyle errors
+    "W",  # pycodestyle warnings
+    "F",  # pyflakes
+    "I",  # isort
+    "B",  # flake8-bugbear
+    "C4", # flake8-comprehensions
+    "UP", # pyupgrade
+]
+ignore = [
+    "E501", # line too long (handled by formatter)
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["{{ cookiecutter.project_slug }}"]
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "{{ cookiecutter.project_slug }}.settings.local"
+python_files = ["test_*.py", "*_test.py", "tests.py"]
+addopts = "--cov={{ cookiecutter.project_slug }} --cov-report=html --cov-report=term-missing"

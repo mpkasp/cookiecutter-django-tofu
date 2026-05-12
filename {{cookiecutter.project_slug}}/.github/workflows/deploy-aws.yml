@@ -1,0 +1,204 @@
+{% if cookiecutter.cloud_provider == "aws" or cookiecutter.cloud_provider == "both" -%}
+name: Deploy to AWS
+
+on:
+  push:
+    branches: [ master, prod ]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - prod
+  workflow_call:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: false
+        default: 'dev'
+        type: string
+
+concurrency:
+  group: {% raw %}deploy-${{ github.ref }}{% endraw %}
+  cancel-in-progress: false
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  build:
+    name: Build & Push Image
+    needs: ci
+    runs-on: ubuntu-latest
+    environment: {% raw %}${{ inputs.environment || (github.ref == 'refs/heads/prod' && 'prod') || 'dev' }}{% endraw %}
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      AWS_REGION: {% raw %}${{ vars.AWS_REGION }}{% endraw %}
+      ECR_REPOSITORY: {% raw %}${{ vars.AWS_ECR_REPOSITORY }}{% endraw %}
+    outputs:
+      image_uri: {% raw %}${{ steps.build.outputs.image_uri }}{% endraw %}
+      registry: {% raw %}${{ steps.login-ecr.outputs.registry }}{% endraw %}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: {% raw %}${{ secrets.AWS_ROLE_TO_ASSUME }}{% endraw %}
+          aws-region: {% raw %}${{ env.AWS_REGION }}{% endraw %}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Read Python version
+        id: python_version
+        run: echo "version=$(cat .python-version)" >> $GITHUB_OUTPUT
+
+      - name: Build and push Docker image
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            {% raw %}${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}{% endraw %}
+            {% raw %}${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:latest{% endraw %}
+          build-args: |
+            PYTHON_VERSION={% raw %}${{ steps.python_version.outputs.version }}{% endraw %}
+          cache-from: type=registry,ref={% raw %}${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:latest{% endraw %}
+          cache-to: type=inline
+
+  migrate:
+    name: Run Database Migrations
+    needs: build
+    runs-on: ubuntu-latest
+    environment: {% raw %}${{ inputs.environment || (github.ref == 'refs/heads/prod' && 'prod') || 'dev' }}{% endraw %}
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      AWS_REGION: {% raw %}${{ vars.AWS_REGION }}{% endraw %}
+
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: {% raw %}${{ secrets.AWS_ROLE_TO_ASSUME }}{% endraw %}
+          aws-region: {% raw %}${{ env.AWS_REGION }}{% endraw %}
+
+      - name: Run migrations via ECS Fargate
+        env:
+          CLUSTER: {% raw %}${{ vars.AWS_ECS_MIGRATE_CLUSTER }}{% endraw %}
+          TASK_DEF: {% raw %}${{ vars.AWS_ECS_MIGRATE_TASK_DEFINITION }}{% endraw %}
+          SUBNET_IDS: {% raw %}${{ vars.AWS_PRIVATE_SUBNET_IDS }}{% endraw %}
+          SG_ID: {% raw %}${{ vars.AWS_APP_RUNNER_SG_ID }}{% endraw %}
+          IMAGE: {% raw %}${{ needs.build.outputs.registry }}/${{ vars.AWS_ECR_REPOSITORY }}:${{ github.sha }}{% endraw %}
+        run: |
+          TASK_ARN=$(aws ecs run-task \
+            --cluster "$CLUSTER" \
+            --task-definition "$TASK_DEF" \
+            --launch-type FARGATE \
+            --network-configuration "awsvpcConfiguration={subnets=[$SUBNET_IDS],securityGroups=[$SG_ID],assignPublicIp=ENABLED}" \
+            --overrides "{\"containerOverrides\":[{\"name\":\"migrate\",\"image\":\"$IMAGE\"}]}" \
+            --query "tasks[0].taskArn" \
+            --output text)
+
+          echo "Migration task: $TASK_ARN"
+          aws ecs wait tasks-stopped --cluster "$CLUSTER" --tasks "$TASK_ARN"
+
+          EXIT_CODE=$(aws ecs describe-tasks \
+            --cluster "$CLUSTER" \
+            --tasks "$TASK_ARN" \
+            --query "tasks[0].containers[0].exitCode" \
+            --output text)
+
+          if [ "$EXIT_CODE" != "0" ]; then
+            echo "Migrations failed (exit code $EXIT_CODE)" && exit 1
+          fi
+          echo "Migrations completed successfully"
+
+  collectstatic:
+    name: Collect Static Files
+    needs: build
+    runs-on: ubuntu-latest
+    environment: {% raw %}${{ inputs.environment || (github.ref == 'refs/heads/prod' && 'prod') || 'dev' }}{% endraw %}
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      AWS_REGION: {% raw %}${{ vars.AWS_REGION }}{% endraw %}
+      ECR_REPOSITORY: {% raw %}${{ vars.AWS_ECR_REPOSITORY }}{% endraw %}
+
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: {% raw %}${{ secrets.AWS_ROLE_TO_ASSUME }}{% endraw %}
+          aws-region: {% raw %}${{ env.AWS_REGION }}{% endraw %}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Run collectstatic
+        run: |
+          docker run --rm \
+            -e DJANGO_SETTINGS_MODULE={{ cookiecutter.project_slug }}.settings.aws \
+            -e AWS_REGION={% raw %}${{ env.AWS_REGION }}{% endraw %} \
+            -e AWS_ACCESS_KEY_ID={% raw %}${{ env.AWS_ACCESS_KEY_ID }}{% endraw %} \
+            -e AWS_SECRET_ACCESS_KEY={% raw %}${{ env.AWS_SECRET_ACCESS_KEY }}{% endraw %} \
+            -e AWS_SESSION_TOKEN={% raw %}${{ env.AWS_SESSION_TOKEN }}{% endraw %} \
+            -e AWS_STORAGE_BUCKET_NAME={% raw %}${{ vars.AWS_STORAGE_BUCKET_NAME }}{% endraw %} \
+            -e SECRET_KEY={% raw %}${{ secrets.DJANGO_SECRET_KEY }}{% endraw %} \
+            {% raw %}${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}{% endraw %} \
+            python manage.py collectstatic --verbosity 2 --no-input
+
+  deploy:
+    name: Deploy to App Runner
+    needs: [migrate, collectstatic]
+    runs-on: ubuntu-latest
+    environment: {% raw %}${{ inputs.environment || (github.ref == 'refs/heads/prod' && 'prod') || 'dev' }}{% endraw %}
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      AWS_REGION: {% raw %}${{ vars.AWS_REGION }}{% endraw %}
+      SERVICE_NAME: {% raw %}${{ vars.AWS_SERVICE_NAME }}{% endraw %}
+
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: {% raw %}${{ secrets.AWS_ROLE_TO_ASSUME }}{% endraw %}
+          aws-region: {% raw %}${{ env.AWS_REGION }}{% endraw %}
+
+      - name: Deploy to App Runner
+        run: |
+          SERVICE_ARN=$(aws apprunner list-services \
+            --query "ServiceSummaryList[?ServiceName=='{% raw %}${{ env.SERVICE_NAME }}{% endraw %}'].ServiceArn" \
+            --output text --region {% raw %}${{ env.AWS_REGION }}{% endraw %})
+          aws apprunner start-deployment \
+            --service-arn $SERVICE_ARN \
+            --region {% raw %}${{ env.AWS_REGION }}{% endraw %}
+
+      - name: Wait for deployment
+        run: |
+          SERVICE_ARN=$(aws apprunner list-services \
+            --query "ServiceSummaryList[?ServiceName=='{% raw %}${{ env.SERVICE_NAME }}{% endraw %}'].ServiceArn" \
+            --output text --region {% raw %}${{ env.AWS_REGION }}{% endraw %})
+          aws apprunner wait service-running \
+            --service-arn $SERVICE_ARN \
+            --region {% raw %}${{ env.AWS_REGION }}{% endraw %}
+
+{% endif -%}

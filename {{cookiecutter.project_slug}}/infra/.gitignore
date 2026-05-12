@@ -1,0 +1,11 @@
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Gitignore local secret overrides; commit dev.tfvars and prod.tfvars instead
+*.secrets.tfvars
