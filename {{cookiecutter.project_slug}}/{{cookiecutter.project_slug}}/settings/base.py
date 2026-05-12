@@ -89,7 +89,7 @@ if DEBUG or LOCALHOST:
 INSTALLED_APPS = [
     '{{ cookiecutter.project_slug }}',
     {% if cookiecutter.use_custom_user_model == "yes" -%}
-    '{{ cookiecutter.project_slug }}.users',
+    'apps.users',
     {% endif -%}
     # Django contrib apps
     'django.contrib.admin',
