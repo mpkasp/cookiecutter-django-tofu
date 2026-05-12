@@ -1,13 +1,33 @@
 from django import forms
 from django.conf import settings
 from django.contrib.auth import get_user_model
-from django.contrib.auth.forms import UserChangeForm, UserCreationForm
+from django.contrib.auth.forms import (
+    AuthenticationForm,
+    PasswordResetForm,
+    SetPasswordForm,
+    UserChangeForm,
+    UserCreationForm,
+)
 from django.core.exceptions import ValidationError
 
 from django_recaptcha.fields import ReCaptchaField
-
+{% if cookiecutter.css_framework == "bootstrap5" %}
+from crispy_forms.helper import FormHelper
+from crispy_forms.layout import Submit
+{% endif %}
 User = get_user_model()
 
+
+class LoginForm(AuthenticationForm):
+    def __init__(self, request=None, *args, **kwargs):
+        super().__init__(request, *args, **kwargs)
+        self.fields['username'].label = 'Email'
+        self.fields['username'].widget = forms.EmailInput(attrs={'placeholder': 'you@example.com', 'autofocus': True})
+        self.fields['password'].widget.attrs['placeholder'] = 'Password'
+        {% if cookiecutter.css_framework == "bootstrap5" -%}
+        self.helper = FormHelper()
+        self.helper.add_input(Submit('submit', 'Sign in', css_class='btn btn-primary w-100'))
+        {% endif %}
 
 class UserCreationForm(UserCreationForm):
     first_name = forms.CharField(required=True)
@@ -23,16 +43,17 @@ class UserCreationForm(UserCreationForm):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-
         skip_captcha = settings.DEBUG or getattr(settings, "RECAPTCHA_TESTING", False)
-
         self.fields['captcha'].required = not skip_captcha
         if skip_captcha:
             del self.fields['captcha']
+        {% if cookiecutter.css_framework == "bootstrap5" -%}
+        self.helper = FormHelper()
+        self.helper.add_input(Submit('submit', 'Create account', css_class='btn btn-primary w-100'))
+        {% endif %}
 
     def clean_email(self):
         email = self.cleaned_data['email']
-        # Check if email already exists, excluding current user if updating (though this is CreationForm)
         if User.objects.filter(email__iexact=email).exists():
             raise ValidationError('An account with this email address already exists.')
         return email
@@ -45,6 +66,25 @@ class UserCreationForm(UserCreationForm):
         if commit:
             user.save()
         return user
+
+
+class PasswordResetRequestForm(PasswordResetForm):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields['email'].widget.attrs['placeholder'] = 'you@example.com'
+        {% if cookiecutter.css_framework == "bootstrap5" -%}
+        self.helper = FormHelper()
+        self.helper.add_input(Submit('submit', 'Send reset link', css_class='btn btn-primary w-100'))
+        {% endif %}
+
+
+class SetNewPasswordForm(SetPasswordForm):
+    def __init__(self, user, *args, **kwargs):
+        super().__init__(user, *args, **kwargs)
+        {% if cookiecutter.css_framework == "bootstrap5" -%}
+        self.helper = FormHelper()
+        self.helper.add_input(Submit('submit', 'Set password', css_class='btn btn-primary w-100'))
+        {% endif %}
 
 
 class UserChangeForm(UserChangeForm):

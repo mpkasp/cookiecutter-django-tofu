@@ -4,45 +4,100 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% raw %}{% block title %}{% endraw %}{{ cookiecutter.project_name }}{% raw %}{% endblock %}{% endraw %}</title>
-    
+
     {% raw %}{% load static %}{% endraw %}
-    
+
     {% if cookiecutter.css_framework == "bootstrap5" -%}
     <!-- Bootstrap 5 CSS -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous">
     {% endif -%}
-    
-    <!-- Add your CSS here -->
     {% raw %}{% block extra_css %}{% endblock %}{% endraw %}
 </head>
-<body>
+<body{% if cookiecutter.css_framework == "bootstrap5" %} class="d-flex flex-column min-vh-100"{% endif %}>
+
+    {% if cookiecutter.css_framework == "bootstrap5" -%}
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+        <div class="container">
+            <a class="navbar-brand fw-semibold" href="/">{{ cookiecutter.project_name }}</a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#mainNav">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="mainNav">
+                {% raw %}{% if user.is_authenticated %}{% endraw %}
+                <ul class="navbar-nav me-auto">
+                    <li class="nav-item"><a class="nav-link" href="/">Dashboard</a></li>
+                </ul>
+                <ul class="navbar-nav ms-auto">
+                    <li class="nav-item dropdown">
+                        <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
+                            {% raw %}{{ user.get_full_name|default:user.email }}{% endraw %}
+                        </a>
+                        <ul class="dropdown-menu dropdown-menu-end">
+                            <li><span class="dropdown-item-text text-muted small">{% raw %}{{ user.email }}{% endraw %}</span></li>
+                            <li><hr class="dropdown-divider"></li>
+                            <li>
+                                <form method="post" action="{% raw %}{% url '{% endraw %}{% if cookiecutter.use_custom_user_model == "yes" %}users:{% endif %}{% raw %}logout' %}{% endraw %}">
+                                    {% raw %}{% csrf_token %}{% endraw %}
+                                    <button type="submit" class="dropdown-item">Sign out</button>
+                                </form>
+                            </li>
+                        </ul>
+                    </li>
+                </ul>
+                {% raw %}{% else %}{% endraw %}
+                <ul class="navbar-nav ms-auto">
+                    <li class="nav-item"><a class="nav-link" href="{% raw %}{% url '{% endraw %}{% if cookiecutter.use_custom_user_model == "yes" %}users:{% endif %}{% raw %}login' %}{% endraw %}">Sign in</a></li>
+                    <li class="nav-item"><a class="btn btn-primary btn-sm ms-2 my-1" href="{% raw %}{% url '{% endraw %}{% if cookiecutter.use_custom_user_model == "yes" %}users:{% endif %}{% raw %}signup' %}{% endraw %}">Get started</a></li>
+                </ul>
+                {% raw %}{% endif %}{% endraw %}
+            </div>
+        </div>
+    </nav>
+    {% else -%}
     <header>
         <nav>
             <h1>{{ cookiecutter.project_name }}</h1>
-            <!-- Add navigation here -->
         </nav>
     </header>
+    {% endif -%}
 
-    <main>
+    {% if cookiecutter.css_framework == "bootstrap5" -%}
+    {% raw %}{% if messages %}
+    <div class="container mt-3">
+        {% for message in messages %}
+        <div class="alert alert-{{ message.tags|default:'info' }} alert-dismissible fade show" role="alert">
+            {{ message }}
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}{% endraw %}
+    {% endif -%}
+
+    <main{% if cookiecutter.css_framework == "bootstrap5" %} class="flex-grow-1"{% endif %}>
         {% raw %}{% block content %}{% endblock %}{% endraw %}
     </main>
 
-    <footer>
+    <footer{% if cookiecutter.css_framework == "bootstrap5" %} class="border-top py-3 mt-4"{% endif %}>
+        {% if cookiecutter.css_framework == "bootstrap5" -%}
+        <div class="container">
+            <small class="text-muted">&copy; {% raw %}{% now "Y" %}{% endraw %} {{ cookiecutter.project_name }}</small>
+        </div>
+        {% else -%}
         <p>&copy; {% raw %}{% now "Y" %}{% endraw %} {{ cookiecutter.project_name }}</p>
+        {% endif -%}
     </footer>
 
     <!-- HTMX -->
     <script src="https://unpkg.com/htmx.org@2.0.4" integrity="sha384-HGfztofotfshcF7+8n44JQL2oJmowVChPTg48S+jvZoztPfvwD79OC/LTtG6dMp+" crossorigin="anonymous"></script>
-    
+
     <!-- AlpineJS -->
-    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.8/dist/cdn.min.js" integrity="sha384-F7Kf0v8U8P+P4qqzVRdXvvGLLdXHRq6g8H0j0Gg5K8F0F8F0F8F0F8F0F8F0F8F0" crossorigin="anonymous"></script>
-    
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.8/dist/cdn.min.js"></script>
+
     {% if cookiecutter.css_framework == "bootstrap5" -%}
     <!-- Bootstrap 5 JS Bundle -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz" crossorigin="anonymous"></script>
     {% endif -%}
-    
-    <!-- Add your JavaScript here -->
     {% raw %}{% block extra_js %}{% endblock %}{% endraw %}
 </body>
 </html>

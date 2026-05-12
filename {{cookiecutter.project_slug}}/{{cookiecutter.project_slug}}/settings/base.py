@@ -88,6 +88,7 @@ if DEBUG or LOCALHOST:
 # --- Application Configuration ---
 INSTALLED_APPS = [
     '{{ cookiecutter.project_slug }}',
+    'apps.dashboard',
     {% if cookiecutter.use_custom_user_model == "yes" -%}
     'apps.users',
     {% endif -%}
