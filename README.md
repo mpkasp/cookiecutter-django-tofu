@@ -58,7 +58,7 @@ Answer the prompts:
 cd your_project_name
 
 # Install dependencies (including dev dependencies)
-uv sync --extra dev
+uv sync --group dev
 
 # Copy environment file
 cp .env.example .env

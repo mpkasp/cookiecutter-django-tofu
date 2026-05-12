@@ -22,7 +22,7 @@ dependencies = [
     "sentry-sdk[django]>=2.19",
     {% endif -%}
     {% if cookiecutter.email_backend == "mailgun" or cookiecutter.email_backend == "ses" -%}
-    "django-anymail[{{ cookiecutter.email_backend }}]>=12.0",
+    "django-anymail[{% if cookiecutter.email_backend == 'ses' %}amazon-ses{% else %}{{ cookiecutter.email_backend }}{% endif %}]>=12.0",
     {% endif -%}
     {% if cookiecutter.cloud_provider == "gcp" or cookiecutter.cloud_provider == "both" -%}
     "django-storages[google]>=1.14",
