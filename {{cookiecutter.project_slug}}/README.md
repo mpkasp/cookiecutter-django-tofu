@@ -48,8 +48,16 @@ uv sync --group dev
 3. Set up environment variables:
 ```bash
 cp .env.example .env
-# Edit .env with your local configuration
 ```
+Minimum changes for local development:
+- `SECRET_KEY` — run `python -c "from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())"` and paste the result
+{% if cookiecutter.email_backend == "mailgun" -%}
+- `MAILGUN_API_KEY` and `MAILGUN_SENDER_DOMAIN` — from your Mailgun dashboard
+{% elif cookiecutter.email_backend == "ses" -%}
+- AWS credentials — configure `~/.aws/credentials` or set `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`
+{% endif -%}
+- `SOCIAL_AUTH_GOOGLE_OAUTH2_KEY` / `_SECRET` — only needed if enabling Google login; leave blank to skip
+- Everything else can stay as-is for local SQLite development
 
 4. Create initial migrations and run migrations:
 ```bash

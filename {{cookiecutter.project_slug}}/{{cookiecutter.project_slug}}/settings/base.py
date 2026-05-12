@@ -191,7 +191,8 @@ STORAGES = {
     },
 }
 
-# --- Email and Internationalization ---
+# --- Email ---
+{% if cookiecutter.email_backend == "mailgun" -%}
 MAILGUN_API_KEY = env.str("MAILGUN_API_KEY", "")
 if MAILGUN_API_KEY:
     MAILGUN_SENDER_DOMAIN = os.environ.get('MAILGUN_SENDER_DOMAIN', f'mg.{DOMAIN}')
@@ -200,11 +201,16 @@ if MAILGUN_API_KEY:
         "MAILGUN_SENDER_DOMAIN": MAILGUN_SENDER_DOMAIN,
     }
     EMAIL_BACKEND = "anymail.backends.mailgun.EmailBackend"
+MAILGUN_DAILY_LIMIT = env.int("MAILGUN_DAILY_LIMIT", default=80)
+{% elif cookiecutter.email_backend == "ses" -%}
+EMAIL_BACKEND = "anymail.backends.amazon_ses.EmailBackend"
+{% endif -%}
 
 DEFAULT_FROM_EMAIL = f"{{ cookiecutter.project_name }} <info@{DOMAIN}>"
 SERVER_EMAIL = f"info@{DOMAIN}"
 NO_REPLY_EMAIL = f"{{ cookiecutter.project_name }} <no-reply@{DOMAIN}>"
-MAILGUN_DAILY_LIMIT = env.int("MAILGUN_DAILY_LIMIT", default=80)
+
+# --- Internationalization ---
 
 LANGUAGE_CODE = 'en-us'
 TIME_ZONE = 'UTC'
